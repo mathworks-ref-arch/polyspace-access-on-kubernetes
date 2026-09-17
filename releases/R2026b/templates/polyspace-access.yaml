@@ -1,0 +1,409 @@
+{{- if .Values.global.volume.storageClassName }}
+{{- if eq (include "polyspaceAccess.db.external" .) "false" }}
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: polyspace-access-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    {{- toYaml .Values.volumes.polyspaceAccess.db.resources | nindent 4 }}
+  storageClassName: {{ .Values.global.volume.storageClassName }}
+  volumeMode: Filesystem
+
+---
+{{- end}}
+
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: polyspace-access-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    {{- toYaml .Values.volumes.polyspaceAccess.etl.resources.storage | nindent 4 }}
+  storageClassName: {{ .Values.global.volume.storageClassName }}
+  volumeMode: Filesystem
+
+---
+
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: polyspace-access-working
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    {{- toYaml .Values.volumes.polyspaceAccess.etl.resources.working | nindent 4 }}
+  storageClassName: {{ .Values.global.volume.storageClassName }}
+  volumeMode: Filesystem
+
+---
+
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: polyspace-access-invalid
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    {{- toYaml .Values.volumes.polyspaceAccess.etl.resources.invalid | nindent 4 }}
+  storageClassName: {{ .Values.global.volume.storageClassName }}
+  volumeMode: Filesystem
+
+---
+
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: polyspace-access-upload
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    {{- toYaml .Values.volumes.polyspaceAccess.etl.resources.upload | nindent 4 }}
+  storageClassName: {{ .Values.global.volume.storageClassName }}
+  volumeMode: Filesystem
+
+---
+
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: polyspace-access-download
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    {{- toYaml .Values.volumes.polyspaceAccess.webServer.resources.download | nindent 4 }}
+  storageClassName: {{ .Values.global.volume.storageClassName }}
+  volumeMode: Filesystem
+
+---
+
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: polyspace-access-temp-upload
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    {{- toYaml .Values.volumes.polyspaceAccess.webServer.resources.tempUpload | nindent 4 }}
+  storageClassName: {{ .Values.global.volume.storageClassName }}
+  volumeMode: Filesystem
+
+---
+{{- end }}
+
+{{- if eq (include "polyspaceAccess.db.external" .) "false" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-polyspace-access-db
+  labels:
+    appId: polyspace-access
+    serviceId: db
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      appId: polyspace-access
+      serviceId: db
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        appId: polyspace-access
+        serviceId: db
+    spec:
+      containers:
+        - name: main
+          env:
+            - name: POSTGRES_PASSWORD
+              {{- include "polyspaceAccess.db.password" . | nindent 14 }}
+            - name: DEBUG
+              value: {{ include "debug" . }}
+          image: "{{ .Values.global.image.registry }}/{{ .Values.images.polyspaceAccess.dbImage }}:{{ .Values.images.polyspaceAccess.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: port-5432
+              containerPort: 5432
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.polyspaceAccess.db.resources | nindent 12 }}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: main-db
+              mountPath: /var/lib/postgresql/data
+              subPath: {{ .Values.volumes.polyspaceAccess.db.subPath }}
+            - name: shm
+              mountPath: /dev/shm
+      dnsPolicy: ClusterFirst
+      {{- with .Values.global.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: main-db
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.polyspaceAccess.db.claimName }}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
+
+---
+{{- end }}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-polyspace-access-etl
+  labels:
+    appId: polyspace-access
+    serviceId: etl
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      appId: polyspace-access
+      serviceId: etl
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        appId: polyspace-access
+        serviceId: etl
+    spec:
+      containers:
+        - name: main
+          env:
+            - name: DB_PASSWORD
+              {{- include "polyspaceAccess.db.password" . | nindent 14 }}
+            - name: JAVA_OPTS
+              value: -Ddatasource.pvfDbPassword=$(DB_PASSWORD)
+            - name: DEBUG
+              value: {{ include "debug" . }}
+            {{- if eq (include "polyspaceAccess.db.external" .) "true" }}
+            - name: POLYSPACE_ACCESS_DB_SERVICE_HOST
+              value: {{ .Values.polyspaceAccess.db.external.host }}
+            - name: POLYSPACE_ACCESS_DB_SERVICE_PORT
+              value: "{{ .Values.polyspaceAccess.db.external.port }}"
+            {{- end }}
+          image: "{{ .Values.global.image.registry }}/{{ .Values.images.polyspaceAccess.etlImage }}:{{ .Values.images.polyspaceAccess.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.polyspaceAccess.etl.resources | nindent 12 }}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: main-storage
+              mountPath: /var/lib/polyspace-etl/storage
+              {{- if .Values.volumes.polyspaceAccess.etl.subPath }}
+              subPath: {{ .Values.volumes.polyspaceAccess.etl.subPath.storage }}
+              {{- end }}
+            - name: main-invalid
+              mountPath: /var/lib/polyspace-etl/corrupted
+              {{- if .Values.volumes.polyspaceAccess.etl.subPath }}
+              subPath: {{ .Values.volumes.polyspaceAccess.etl.subPath.invalid }}
+              {{- end }}
+            - name: main-working
+              mountPath: /var/lib/polyspace-etl/working
+              {{- if .Values.volumes.polyspaceAccess.etl.subPath }}
+              subPath: {{ .Values.volumes.polyspaceAccess.etl.subPath.working }}
+              {{- end }}
+            - name: main-upload
+              mountPath: /var/lib/polyspace-etl/upload
+              {{- if .Values.volumes.polyspaceAccess.etl.subPath }}
+              subPath: {{ .Values.volumes.polyspaceAccess.etl.subPath.upload }}
+              {{- end }}
+      dnsPolicy: ClusterFirst
+      {{- with .Values.global.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: main-storage
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.polyspaceAccess.etl.claimName.storage }}
+        - name: main-invalid
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.polyspaceAccess.etl.claimName.invalid }}
+        - name: main-working
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.polyspaceAccess.etl.claimName.working }}
+        - name: main-upload
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.polyspaceAccess.etl.claimName.upload }}
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-polyspace-access-web-server
+  labels:
+    appId: polyspace-access
+    serviceId: web-server
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      appId: polyspace-access
+      serviceId: web-server
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        appId: polyspace-access
+        serviceId: web-server
+    spec:
+      containers:
+      - name: main
+        env:
+          - name: DB_PASSWORD
+            {{- include "polyspaceAccess.db.password" . | nindent 12 }}
+          - name: JAVA_OPTS
+            value: -Ddatasource.pvfDbPassword=$(DB_PASSWORD)
+          - name: DEBUG
+            value: {{ include "debug" . }}
+          {{- if eq (include "polyspaceAccess.db.external" .) "true" }}
+          - name: POLYSPACE_ACCESS_DB_SERVICE_HOST
+            value: {{ .Values.polyspaceAccess.db.external.host }}
+          - name: POLYSPACE_ACCESS_DB_SERVICE_PORT
+            value: "{{ .Values.polyspaceAccess.db.external.port }}"
+          {{- end }}
+        image: "{{ .Values.global.image.registry }}/{{ .Values.images.polyspaceAccess.webServerImage }}:{{ .Values.images.polyspaceAccess.tag }}"
+        imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+        ports:
+          - name: port-9443
+            containerPort: 9443
+            protocol: TCP
+        resources:
+          {{- toYaml .Values.polyspaceAccess.webServer.resources | nindent 10 }}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+          - name: main-upload
+            mountPath: /var/lib/polyspace-web-server/upload
+            {{- if .Values.volumes.polyspaceAccess.etl.subPath }}
+            subPath: {{ .Values.volumes.polyspaceAccess.etl.subPath.upload }}
+            {{- end }}
+          - name: main-temp-upload
+            mountPath: /var/lib/polyspace-web-server/temp-upload
+            {{- if .Values.volumes.polyspaceAccess.webServer.subPath }}
+            subPath: {{ .Values.volumes.polyspaceAccess.webServer.subPath.tempUpload }}
+            {{- end }}
+          - name: main-license
+            mountPath: /app/matlab/licenses
+            {{- if .Values.polyspaceAccess.webServer.license.fileSubPath }}
+            subPath: {{ .Values.polyspaceAccess.webServer.license.fileSubPath }}
+            {{- end }}
+          - name: main-download
+            mountPath: /app/download
+            {{- if .Values.volumes.polyspaceAccess.webServer.subPath }}
+            subPath: {{ .Values.volumes.polyspaceAccess.webServer.subPath.download }}
+            {{- end }}
+          - name: shm
+            mountPath: /dev/shm
+      dnsPolicy: ClusterFirst
+      {{- with .Values.global.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: main-upload
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.polyspaceAccess.etl.claimName.upload }}
+        - name: main-temp-upload
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.polyspaceAccess.webServer.claimName.tempUpload }}
+        - name: main-download
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.polyspaceAccess.webServer.claimName.download }}
+        - name: main-license
+          secret:
+            secretName: {{ .Values.polyspaceAccess.webServer.license.secretName }}
+            items:
+            - key: {{ if .Values.polyspaceAccess.webServer.license.key }}{{ .Values.polyspaceAccess.webServer.license.key }}{{ else }}license.lic{{ end }}
+              path: license.lic
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
+
+---
+
+{{- if eq (include "polyspaceAccess.db.external" .) "false" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: polyspace-access-db
+  labels:
+    appId: polyspace-access
+    serviceId: db
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: port-polyspace-access-db-main-0
+      port: 5432
+      protocol: TCP
+      targetPort: 5432
+  selector:
+    appId: polyspace-access
+    serviceId: db
+  sessionAffinity: None
+  type: ClusterIP
+
+---
+{{- end }}
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: polyspace-access-web-server
+  labels:
+    appId: polyspace-access
+    serviceId: web-server
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: port-polyspace-access-web-server-main-0
+      port: 9443
+      protocol: TCP
+      targetPort: 9443
+  selector:
+    appId: polyspace-access
+    serviceId: web-server
+  sessionAffinity: None
+  type: ClusterIP

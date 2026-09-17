@@ -1,0 +1,307 @@
+global:
+  debug: false
+  image:
+    registry:
+    # IfNotPresent (default) | Always | Never > Kubernetes imagePullPolicy https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  ingress:
+    controllerName: nginx
+    annotations: {}
+    ## Machine hostname, IP not accepted, e.g. example.com
+    host:
+    ## Ingress URL, e.g. https://example.com
+    ## If not provided, will default to https://{{.Values.global.ingress.host}}
+    url: 
+    tls:
+      enabled: false
+      secretName: 
+  volume:
+    # It is recommended to not create volumes via helm chart and instead provision them as prerequisite and manage them externally.
+    create: false
+    storageClassName: 
+
+images:
+  usermanager:
+    tag: 2.51.0
+    authnzImage: com.mathworks.cloudservices.usermanager.usermanager-authnz-image
+    serverImage: com.mathworks.cloudservices.usermanager.usermanager-image
+    uiImage: com.mathworks.cloudservices.usermanager.usermanager-webui
+  issuetracker:
+    tag: 3.11.0
+    serverImage: com.mathworks.cloudservices.issuetracker.issuetracker-image
+    uiImage: com.mathworks.cloudservices.issuetracker.issuetracker-web-image
+  polyspaceAccess:
+    tag: 26.2.0
+    etlImage: com.mathworks.polyspace.center.etl
+    webServerImage: com.mathworks.polyspace.center.web-server
+
+volumes:
+  polyspaceAccess:
+    etl:
+      claimName:
+        storage: polyspace-access-storage
+        invalid: polyspace-access-invalid
+        working: polyspace-access-working
+        upload: polyspace-access-upload
+      # subPath:
+      #   storage: polyspace-access/storage
+      #   invalid: polyspace-access/invalid
+      #   working: polyspace-access/working
+      #   upload: polyspace-access/upload
+      resources:
+        storage:
+          requests:
+            storage: "250Mi"
+        invalid:
+          requests:
+              storage: "250Mi"
+        working:
+          requests:
+            storage: "250Mi"
+        upload:
+          requests:
+            storage: "250Mi"
+    webServer:
+      claimName:
+        tempUpload: polyspace-access-temp-upload
+        download: polyspace-access-download
+      # subPath:
+      #   tempUpload: polyspace-access/temp-upload
+      #   download: polyspace-access/download
+      resources:
+        tempUpload:
+          requests:
+            storage: "250Mi"
+        download:
+          requests:
+              storage: "250Mi"
+
+usermanager:
+  db:
+    ## External database enables to bring your own initialized postgres database instance.
+    ## If disabled, default postgres database will be deployed.
+    external:
+      enabled: true
+      host: 
+      port: 
+      # username and password to be provided in usermanager-server config
+      # ongoing ticket to convert to secret
+  authnz:
+    resources:
+      requests:
+        memory: "100Mi"
+        cpu: "125m"
+      limits:
+        memory: "250Mi"
+        cpu: "250m"
+  server:
+    config:
+      accessToken:
+        privateKeyPath: /app/signing/auth-private-key.pem # do not change
+        expirationSec: 86400
+      db:
+        username: 
+        password: 
+        timeoutNanoSeconds: 20000000000
+        sslEnabled: false
+      saml:
+        enabled: false
+        binding:
+        corsDomain:
+        metadataUrl:
+        relyingParty:
+        user:
+          id: uname
+          displayName: uname
+          email: email
+          image: image
+      ## providers to connect to LDAP directory
+      # providers:
+      # - type: ldap
+      #   syncIntervalNanoSeconds: 1800000000000
+      #   properties:
+      #     credentials:
+      #       bindDN: ""
+      #       bindPassword: ""
+      #     url: ""
+      #     searchOptions:
+      #       user:
+      #         filter: ""
+      #         searchBaseDN: ""
+      #         schema:
+      #           id: ""
+      #           displayName: ""
+      #           image: ""
+      #           email: ""
+      #           member: ""
+      #       group:
+      #         enabled: false
+      #         filter: ""
+      #         searchBaseDN: ""
+      #         schema:
+      #           id: ""
+      #           displayName: ""
+      #           image: ""
+      #           email: ""
+      #           member: ""
+      #     generalOptions:
+      #       paginate: true
+      #       pageSize: 1000
+      adminIds:
+      - admin
+      adminInitialPassword: password
+      # apiKeys:
+      #   key1:
+      #     principal:
+      #   key2:
+      #     principal:
+    authPrivateKey:
+      secret:
+        name: auth-private-key
+        key: auth-private-key.pem
+    resources:
+      requests:
+        memory: "100Mi"
+        cpu: "125m"
+      limits:
+        memory: "250Mi"
+        cpu: "250m"
+    tls:
+      ## Enable TLS (for LDAPS connection)
+      enabled: false
+      ca:
+        ## Secret name which contains the CA
+        secretName:
+        ## key name of the CA file
+        key:
+  ui:
+    resources:
+      requests:
+        memory: "100Mi"
+        cpu: "125m"
+      limits:
+        memory: "250Mi"
+        cpu: "250m"
+
+issuetracker:
+  enabled: false
+  server:
+  ## Select one of the providers from none | jira | polarian | redmine
+    provider: none
+    # provider: jira
+    # provider: polarian
+    # provider: redmine
+    ## Provide issuetracker configuration via configSecret or config values.
+    ## configSecret takes precedence over config values if both are provided.
+    # configSecret:
+    #   name: polyspace-access
+    #   key: config-issuetracker.json
+    ## Select one of the configurations depending on the provider
+    ## 1a. jira-server-cookie configuration
+    # config:
+    #   url:
+    #   jiraType: server
+    #   authnMethod: cookie
+    ## 1b. jira-server-oauth1 configuration
+    # config:
+    #   url:
+    #   jiraType: server
+    #   authnMethod: oauth1
+    #   authnConfig:
+    #     consumerKey:
+    #     callbackBaseURL:
+    #     privateKeyPath:
+    ## 1c. jira-cloud-oauth1 configuration
+    # config:
+    #   url:
+    #   jiraType: cloud
+    #   authnMethod: oauth1
+    #   authnConfig:
+    #     consumerKey:
+    #     callbackBaseURL:
+    #     privateKeyPath:
+    ## 1d. jira-cloud-oauth2 configuration
+    # config:
+    #   url:
+    #   jiraType: cloud
+    #   authnMethod: oauth2
+    #   authnConfig:
+    #     clientId: 
+    #     clientSecret: 
+    #     redirectURL:
+    #     scopes: []
+    #     siteURL:
+    ## 1e. jira-data-center-oauth1 configuration
+    # config:
+    #   url:
+    #   jiraType: dataCenter
+    #   authnMethod: oauth1
+    #   authnConfig:
+    #     consumerKey:
+    #     callbackBaseURL:
+    #     privateKeyPath:
+    ## 1f. jira-data-center-oauth2 configuration
+    # config:
+    #   url:
+    #   jiraType: dataCenter
+    #   authnMethod: oauth2
+    #   authnConfig:
+    #     clientId: 
+    #     clientSecret: 
+    #     redirectURL:
+    ## 2. polarian configuration
+    # config:
+    #   url:
+    #   apiKey: 
+    ## 3. redmine configuration
+    # config:
+    #   url:
+    #   apiKey:
+    resources:
+      requests:
+        memory: "100Mi"
+        cpu: "125m"
+      limits:
+        memory: "250Mi"
+        cpu: "250m"
+  ui:
+    resources:
+      requests:
+        memory: "100Mi"
+        cpu: "125m"
+      limits:
+        memory: "250Mi"
+        cpu: "250m"
+    
+polyspaceAccess:
+  db:
+    ## External database enables to bring your own initialized postgres database instance.
+    ## If disabled, default postgres database will be deployed.
+    external:
+      enabled: true
+      host: 
+      port: 
+      ## username is not configurable
+      passwordSecret:
+        name:
+        key:
+  etl:
+    resources:
+      requests:
+        memory: "32Gi"
+        cpu: "4"
+      limits:
+        memory: "32Gi"
+        cpu: "4"
+  webServer:
+    license:
+      secretName: mw-license
+      key: license.lic
+    resources:
+      requests:
+        memory: "32Gi"
+        cpu: "4"
+      limits:
+        memory: "32Gi"
+        cpu: "4"

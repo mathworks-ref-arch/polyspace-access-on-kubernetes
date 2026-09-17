@@ -1,0 +1,173 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-{{ .Chart.Name }}
+  annotations:
+    {{- toYaml .Values.global.ingress.annotations | nindent 4 }}
+spec:
+  {{- if .Values.global.ingress.controllerName }}
+  ingressClassName: {{ .Values.global.ingress.controllerName }}
+  {{- end }}
+  {{- if .Values.global.ingress.tls.enabled }}
+  tls:
+    - hosts:
+      - {{ .Values.global.ingress.host }}
+      secretName: {{ .Values.global.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - http:
+        paths:
+          - path: /authnz
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-authnz
+                port:
+                  number: 5693
+          {{- if .Values.global.debug }}
+          - path: /_authnz
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-authnz
+                port:
+                  number: 5693
+          {{- end }}
+          - path: /core/authnz/api
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-authnz
+                port:
+                  number: 5693
+          - path: /service/core/authnz
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-authnz
+                port:
+                  number: 5693
+          - path: /signin
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-authnz
+                port:
+                  number: 5693
+          - path: /authn/api/v1/signin
+            pathType: Prefix
+            backend:
+              service:
+                name: polyspace-access-web-server
+                port:
+                  number: 9443
+          - path: /authn
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-server
+                port:
+                  number: 5000
+          - path: /authz
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-server
+                port:
+                  number: 5000
+          - path: /um/ui/dashboard # usermanager dashboard URL
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-ui
+                port:
+                  number: 8080
+          - path: /um/ui
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-ui
+                port:
+                  number: 8080
+          - path: /um
+            pathType: Prefix
+            backend:
+              service:
+                name: usermanager-server
+                port:
+                  number: 5000
+          {{- if .Values.issuetracker.enabled }}
+          - path: /issuetracker/ui/issues/create/form # issuetracker entrypoint URL
+            pathType: Prefix
+            backend:
+              service:
+                name: issuetracker-ui
+                port:
+                  number: 8080
+          - path: /issuetracker/ui
+            pathType: Prefix
+            backend:
+              service:
+                name: issuetracker-ui
+                port:
+                  number: 8080
+          - path: /issuetracker
+            pathType: Prefix
+            backend:
+              service:
+                name: issuetracker-server
+                port:
+                  number: 5000
+          {{- end }}
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: polyspace-access-web-server
+                port:
+                  number: 9443
+          - path: /metrics # polyspace access dashboard URL
+            pathType: Prefix
+            backend:
+              service:
+                name: polyspace-access-web-server
+                port:
+                  number: 9443
+          - path: /polyspace
+            pathType: Prefix
+            backend:
+              service:
+                name: polyspace-access-web-server
+                port:
+                  number: 9443
+          - path: /psdatastream
+            pathType: Prefix
+            backend:
+              service:
+                name: polyspace-access-web-server
+                port:
+                  number: 9443
+          - path: /setdebugmode
+            pathType: Prefix
+            backend:
+              service:
+                name: polyspace-access-web-server
+                port:
+                  number: 9443
+          - path: /static
+            pathType: Prefix
+            backend:
+              service:
+                name: polyspace-access-web-server
+                port:
+                  number: 9443
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: polyspace-access-web-server
+                port:
+                  number: 9443
+      {{- if .Values.global.ingress.host }}
+      host: {{ .Values.global.ingress.host }}
+      {{- end }}

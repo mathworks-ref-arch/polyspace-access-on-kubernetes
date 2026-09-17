@@ -1,0 +1,11 @@
+apiVersion: v2
+name: polyspace-access
+description: A Helm chart for Polyspace Access. Identify coding defects, review static analysis results, and monitor software quality metrics.
+
+version: "0.7.0"
+appVersion: 26.2.0
+
+type: application
+
+annotations:
+  release: 2026b

@@ -1,0 +1,490 @@
+{{- if eq (include "usermanager.db.external" .) "false" }}
+{{- if .Values.global.volume.create }}
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: usermanager-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    {{- toYaml .Values.volumes.usermanager.db.resources | nindent 4 }}
+  storageClassName: {{ .Values.global.volume.storageClassName }}
+  volumeMode: Filesystem
+
+---
+{{- end }}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-usermanager-db
+  labels:
+    appId: usermanager
+    serviceId: db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      appId: usermanager
+      serviceId: db
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        appId: usermanager
+        serviceId: db
+    spec:
+      containers:
+        - name: main
+          env:
+            - name: UMDB_USER
+              value: {{ .Values.usermanager.server.config.db.username }}
+            - name: UMDB_PASSWORD
+              value: {{ .Values.usermanager.server.config.db.password }}
+            - name: DEBUG
+              value: {{ include "debug" . }}
+          image: "{{ .Values.global.image.registry }}/{{ .Values.images.usermanager.dbImage }}:{{ .Values.images.usermanager.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: port-5432
+              containerPort: 5432
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.usermanager.db.resources | nindent 12 }}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: main-db
+              mountPath: /var/lib/postgresql/data
+              {{- if .Values.volumes.usermanager.db.subPath }}
+              subPath: {{ .Values.volumes.usermanager.db.subPath }}
+              {{- end }}
+      dnsPolicy: ClusterFirst
+      {{- with .Values.global.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: main-db
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.usermanager.db.claimName }}
+
+---
+{{- end }}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-usermanager-authnz
+  labels:
+    appId: usermanager
+    serviceId: authnz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      appId: usermanager
+      serviceId: authnz
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        appId: usermanager
+        serviceId: authnz
+    spec:
+      containers:
+        - name: main
+          env:
+            - name: mito.debug
+              value: "{{ .Values.global.debug }}"
+            - name: mito.http.port
+              value: "5693"
+            - name: opi.authnz.maxtokenlifehours
+              value: "1"
+            - name: mito.http.cors.alloworigindomains
+              value: "{{ if .Values.usermanager.server.config.saml.enabled }}{{ .Values.usermanager.server.config.saml.corsDomain }}{{ end }}"
+            - name: opi.authnz.desturlpattern
+              value: "^/*"
+            - name: mito.http.truststore.validatecertificate
+              value: "false"
+            - name: opi.authnz.saml.enabled
+              value: "{{ .Values.usermanager.server.config.saml.enabled }}"
+            {{- if .Values.usermanager.server.config.saml.enabled }}
+            - name: opi.authnz.saml.id
+              value: "saml"
+            - name: opi.authnz.saml.authRequestBinding
+              value: "{{ .Values.usermanager.server.config.saml.binding }}"
+            - name: opi.authnz.saml.idpmetadataurl
+              value: "{{ .Values.usermanager.server.config.saml.metadataUrl }}"
+            - name: opi.authnz.saml.relyingpartyid
+              value: "{{ .Values.usermanager.server.config.saml.relyingParty }}"
+            - name: opi.authnz.saml.subjectattributemapping
+              value: {{ include "usermanager.authnz.samlAttributeToAuthnzMap" . | quote }}
+            - name: opi.authnz.saml.desturlpattern
+              value: "^/*"
+            {{- end }}
+            {{- if .Values.usermanager.server.config.providers }}
+            {{- $ldap := index .Values.usermanager.server.config.providers 0 }}
+            {{- $url := urlParse $ldap.properties.url }}
+            - name: opi.authnz.ldap.enabled
+              value: "true"
+            - name: opi.authnz.ldap.id
+              value: "ldap"
+            - name: opi.authnz.ldap.loginurl
+              value: "/signin"
+            - name: opi.authnz.query.ldap.identity.enabled
+              value: "true"
+            - name: opi.authnz.ldap.host
+              value: {{ index $url "hostname" | quote }}
+            - name: opi.authnz.ldap.port
+              value: {{ include "usermanager.server.ldap.port" $url | quote }}
+            - name: opi.authnz.ldap.basedn
+              value: "{{ $ldap.properties.searchOptions.user.searchBaseDN }}"
+            - name: opi.authnz.ldap.admindn
+              value: "{{ if $ldap.properties.credentials }}{{ $ldap.properties.credentials.bindDN }}{{ end }}"
+            - name: opi.authnz.ldap.adminpassword
+              value: "{{ if $ldap.properties.credentials }}{{ $ldap.properties.credentials.bindPassword }}{{ end }}"
+            - name: opi.authnz.ldap.filter
+              value: "(&({{ $ldap.properties.searchOptions.user.filter }})({{ $ldap.properties.searchOptions.user.schema.id }}={0}))"
+            - name: opi.authnz.query.ldap.identity.config
+              value: {{ include "usermanager.authnz.ldapIdentityConfig" . | quote }}
+            - name: opi.authnz.ldap.subjectattributemapping
+              value: {{ include "usermanager.authnz.ldapAttributeToAuthnzMap" . | quote }}
+            - name: opi.authnz.ldap.usessl
+              value: {{ if eq (index $url "scheme") "ldaps" }}"true"{{ else }}"false"{{ end }}
+            - name: opi.authnz.fallback.enabled
+              value: "true"
+            - name: opi.authnz.fallback.id
+              value: "fallback"
+            - name: opi.authnz.fallback.fallbackidps
+              value: "ldap,um"
+            {{- if .Values.usermanager.server.tls.enabled }}
+            - name: SSL_CA_FILE
+              value: /etc/ssl/certs/um/ca-certificates.crt
+            - name: mito_http_truststore_trustedcertificatesfile
+              value: /etc/ssl/certs/um/ca-certificates.crt
+            {{- end }}
+            {{- end }}
+            - name: opi.authnz.um.enabled
+              value: "true"
+            - name: opi.authnz.um.id
+              value: "um"
+            - name: opi.authnz.um.loginurl
+              value: "/signin"
+            - name: opi.authnz.um.scheme
+              value: "http"
+            - name: opi.authnz.um.host
+              value: usermanager-server
+            - name: opi.authnz.um.port
+              value: "5000"
+            - name: opi.authnz.um.endpoints.signin
+              value: "/authn/api/v1/signin"
+            - name: opi.authnz.um.endpoints.userinfo
+              value: "/um/api/v1/users"
+            - name: opi.authnz.idps
+              value: {{ include "usermanager.authnz.idps" . | quote }}
+          image: "{{ .Values.global.image.registry }}/{{ .Values.images.usermanager.authnzImage }}:{{ .Values.images.usermanager.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          livenessProbe:
+            httpGet:
+              port: 5693
+              path: /admin/livez
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 2
+          readinessProbe:
+            httpGet:
+              port: 5693
+              path: /admin/readyz
+            initialDelaySeconds: 5
+            timeoutSeconds: 10
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 2
+          ports:
+            - name: port-5693
+              containerPort: 5693
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.usermanager.authnz.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.usermanager.server.tls.enabled }}
+            {{- if .Values.usermanager.server.tls.ca.secretName }}
+            - name: tls-um
+              mountPath: /etc/ssl/certs/um
+            {{- end }}
+            {{- end }}
+      dnsPolicy: ClusterFirst
+      {{- with .Values.global.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 12 }}
+      {{- end }}
+      volumes:
+        {{- if .Values.usermanager.server.tls.enabled }}
+        {{- if .Values.usermanager.server.tls.ca.secretName }}
+        - name: tls-um
+          secret:
+            secretName: {{ .Values.usermanager.server.tls.ca.secretName }}
+            items:
+              - key: {{ if .Values.usermanager.server.tls.ca.key }}{{ .Values.usermanager.server.tls.ca.key }}{{ else }}ca-certificates.crt{{ end }}
+                path: ca-certificates.crt
+        {{- end }}
+        {{- end }}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-usermanager-server
+  labels:
+    appId: usermanager
+    serviceId: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      appId: usermanager
+      serviceId: server
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        appId: usermanager
+        serviceId: server
+    spec:
+      containers:
+        - name: main
+          env:
+            - name: USERMANAGER_CONFIG
+              value: {{ include "usermanager.server.config" . }}
+            - name: USERMANAGER_AUTHNZ_SERVICE_IDP_ID
+              value: {{ include "usermanager.server.authn.type" . }}
+            - name: DEBUG
+              value: {{ include "debug" . }}
+            {{- if .Values.usermanager.server.tls.enabled }}
+            - name: SSL_CA_FILE
+              value: {{ if .Values.usermanager.server.tls.ca.secretName }}/etc/ssl/certs/um/ca-certificates.crt{{ else }}/etc/ssl/certs/ca-certificates.crt{{ end }}
+            {{- end }}
+            {{- if eq (include "usermanager.db.external" .) "true" }}
+            - name: USERMANAGER_DB_SERVICE_HOST
+              value: {{ .Values.usermanager.db.external.host }}
+            - name: USERMANAGER_DB_SERVICE_PORT
+              value: "{{ .Values.usermanager.db.external.port }}"
+            {{- end }}
+          image: "{{ .Values.global.image.registry }}/{{ .Values.images.usermanager.serverImage }}:{{ .Values.images.usermanager.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          ports:
+            - name: port-5000
+              containerPort: 5000
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.usermanager.server.resources | nindent 12 }}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: main-auth-private-key
+              mountPath: /app/signing
+            {{- if .Values.usermanager.server.tls.enabled }}
+            {{- if .Values.usermanager.server.tls.ca.secretName }}
+            - name: tls-um
+              mountPath: /etc/ssl/certs/um
+            {{- end }}
+            {{- end }}
+      dnsPolicy: ClusterFirst
+      {{- with .Values.global.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: main-auth-private-key
+          secret:
+            secretName: {{ .Values.usermanager.server.authPrivateKey.secret.name }}
+            items:
+              - key: {{ .Values.usermanager.server.authPrivateKey.secret.key }}
+                path: auth-private-key.pem
+        {{- if .Values.usermanager.server.tls.enabled }}
+        {{- if .Values.usermanager.server.tls.ca.secretName }}
+        - name: tls-um
+          secret:
+            secretName: {{ .Values.usermanager.server.tls.ca.secretName }}
+            items:
+              - key: {{ if .Values.usermanager.server.tls.ca.key }}{{ .Values.usermanager.server.tls.ca.key }}{{ else }}ca-certificates.crt{{ end }}
+                path: ca-certificates.crt
+        {{- end }}
+        {{- end }}
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-usermanager-ui
+  labels:
+    appId: usermanager
+    serviceId: ui
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      appId: usermanager
+      serviceId: ui
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        appId: usermanager
+        serviceId: ui
+    spec:
+      containers:
+        - name: main
+          env:
+            - name: DEBUG
+              value: {{ include "debug" . }}
+          image: "{{ .Values.global.image.registry }}/{{ .Values.images.usermanager.uiImage }}:{{ .Values.images.usermanager.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 10
+          ports:
+            - name: port-8080
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.usermanager.ui.resources | nindent 12 }}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      {{- with .Values.global.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
+
+---
+
+{{- if eq (include "usermanager.db.external" .) "false" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: usermanager-db
+  labels:
+    appId: usermanager
+    serviceId: db
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: port-usermanager-db-main-0
+      port: 5432
+      protocol: TCP
+      targetPort: 5432
+  selector:
+    appId: usermanager
+    serviceId: db
+  sessionAffinity: None
+  type: ClusterIP
+
+---
+{{- end }}
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: usermanager-authnz
+  labels:
+    appId: usermanager
+    serviceId: authnz
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: port-usermanager-authnz-main-0
+      port: 5693
+      protocol: TCP
+      targetPort: 5693
+  selector:
+    appId: usermanager
+    serviceId: authnz
+  sessionAffinity: None
+  type: ClusterIP
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: usermanager-server
+  labels:
+    appId: usermanager
+    serviceId: server
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: port-usermanager-server-main-0
+      port: 5000
+      protocol: TCP
+      targetPort: 5000
+  selector:
+    appId: usermanager
+    serviceId: server
+  sessionAffinity: None
+  type: ClusterIP
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: usermanager-ui
+  labels:
+    appId: usermanager
+    serviceId: ui
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: port-usermanager-ui-main-0
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    appId: usermanager
+    serviceId: ui
+  sessionAffinity: None
+  type: ClusterIP
